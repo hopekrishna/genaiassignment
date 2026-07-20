@@ -1,196 +1,120 @@
-from crewai import LLM
-import os
-
+import asyncio
 import streamlit as st
-from dotenv import load_dotenv
 
-from crewai import Agent, Task, Crew, Process,LLM
+from team import create_team
 
-# Tool for web searching
-from crewai_tools import SerperDevTool
-
-# Load environment variables
-load_dotenv()
-
-llm = LLM(
-    model="gpt-4.1-mini",
-    api_key=os.getenv("OPENAI_API_KEY")
-)
-# ----------------------------
-# Web Search Tool
-# ----------------------------
-
-search_tool = SerperDevTool()
-# ----------------------------
-# Streamlit UI
-# ----------------------------
-
+# ---------------------------------
+# Page Configuration
+# ---------------------------------
 st.set_page_config(
-    page_title="AI Customer Support System",
+    page_title="Multi-Agent Customer Support",
     page_icon="🤖",
-    layout="centered"
+    layout="wide"
 )
 
-st.title("🤖 AI Customer Support System")
+st.title("🤖 Multi-Agent Customer Support System")
+st.write("Select a department and ask your question.")
 
-st.write("Ask any customer support question.")
+# ---------------------------------
+# Session State
+# ---------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-user_query = st.text_area(
-    "Enter your question:",
-    height=150,
-    placeholder="Example: How can I reset my password?"
-)
+if "department" not in st.session_state:
+    st.session_state.department = None
 
-submit = st.button("Get Answer")
-# ----------------------------
-# Agent 1
-# ----------------------------
+# ---------------------------------
+# Department Selection Function
+# ---------------------------------
+def select_department(dept):
+    if st.session_state.department != dept:
+        st.session_state.department = dept
+        st.session_state.messages = []
+        st.rerun()
 
-support_agent = Agent(
-    role="Customer Support Agent",
-    goal="Answer customer questions clearly and accurately.",
-    backstory=(
-        "You are a helpful customer support representative. "
-        "Provide clear, concise, and friendly answers."
-    ),
-    llm=llm,
-    verbose=True,
-    
-)
-# ----------------------------
-# Agent 2
-# ----------------------------
+# ---------------------------------
+# Department Buttons
+# ---------------------------------
+st.subheader("Choose Department")
 
-research_agent = Agent(
-    role="Web Research Agent",
-    goal="Search the web and provide the most accurate and up-to-date answer.",
-    backstory=(
-        "You are an expert web researcher. "
-        "You search the internet for reliable information before answering."
-    ),
-    llm=llm,
-    tools=[search_tool],
-    verbose=True,
-)
-# ----------------------------
-# Agent 3
-# ----------------------------
+col1, col2, col3, col4 = st.columns(4)
 
-save_agent = Agent(
-    role="Save Results Agent",
-    goal="Save the customer query and both answers into a text file.",
-    backstory=(
-        "You are responsible for saving the customer support conversation "
-        "to a text file for future reference."
-    ),
-    llm=llm,
-    verbose=True,
-)
-# ----------------------------
-# Task 1
-# ----------------------------
+with col1:
+    if st.button("💻 IT Department", use_container_width=True):
+        select_department("IT")
 
-task1 = Task(
-    description="""
-    Answer the following customer question:
+with col2:
+    if st.button("👨‍💼 HR Department", use_container_width=True):
+        select_department("HR")
 
-    {user_query}
+with col3:
+    if st.button("📢 Marketing Department", use_container_width=True):
+        select_department("Marketing")
 
-    Give a clear, accurate, and friendly response.
-    """,
-    expected_output="A helpful answer to the customer's question.",
-    agent=support_agent,
-)
-# ----------------------------
-# Task 2
-# ----------------------------
+with col4:
+    if st.button("🏢 Admin Department", use_container_width=True):
+        select_department("Admin")
 
-task2 = Task(
-    description="""
-    Search the web for the following customer question:
+# ---------------------------------
+# Selected Department
+# ---------------------------------
+if st.session_state.department:
+    st.success(f"Selected Department: {st.session_state.department}")
 
-    {user_query}
+# ---------------------------------
+# Display Chat History
+# ---------------------------------
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-    Use reliable and up-to-date sources to provide an accurate answer.
-    """,
-    expected_output="A well-researched answer based on web search.",
-    agent=research_agent,
-)
-# ----------------------------
-# Task 3
-# ----------------------------
+# ---------------------------------
+# Chat Input
+# ---------------------------------
+prompt = st.chat_input("Type your question...")
 
-task3 = Task(
-    description="""
-    Create a final customer support report.
+if prompt:
 
-    Include:
+    if st.session_state.department is None:
+        st.warning("⚠️ Please select a department first.")
+        st.stop()
 
-    1. Customer Question
-    2. Agent 1 Answer
-    3. Agent 2 Answer
+    # Show user message
+    st.session_state.messages.append(
+        {
+            "role": "user",
+            "content": prompt
+        }
+    )
 
-    Format the report clearly.
-    """,
-    expected_output="A well-formatted customer support report.",
-    agent=save_agent,
-)
-# ----------------------------
-# Crew
-# ----------------------------
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-crew = Crew(
-    agents=[
-        support_agent,
-        research_agent,
-        save_agent
-    ],
-    tasks=[
-        task1,
-        task2,
-        task3
-    ],
-    process=Process.sequential,
-    verbose=True
-)
-# ----------------------------
-# Run Crew
-# ----------------------------
+    # AutoGen Response
+    async def get_response():
+        team = create_team()
 
-if submit:
+        full_prompt = f"""
+Department: {st.session_state.department}
 
-    if user_query.strip() == "":
-        st.warning("Please enter a question.")
+User Question:
+{prompt}
+"""
 
-    else:
+        result = await team.run(task=full_prompt)
 
-        with st.spinner("Generating answer..."):
+        return result.messages[-1].content
 
-            result = crew.kickoff(
-                inputs={
-                    "user_query": user_query
-                }
-            )
+    response = asyncio.run(get_response())
 
-        st.success("Answers Generated!")
+    # Show assistant response
+    with st.chat_message("assistant"):
+        st.markdown(response)
 
-        if len(result.tasks_output) >= 1:
-            st.subheader("Agent 1 Answer")
-            st.markdown(result.tasks_output[0].raw)
-
-        if len(result.tasks_output) >= 2:
-            st.divider()
-            st.subheader("Agent 2 Answer")
-            st.markdown(result.tasks_output[1].raw)
-
-        if len(result.tasks_output) >= 3:
-            final_report = result.tasks_output[2].raw
-
-            with open("output.txt", "w", encoding="utf-8") as file:
-                file.write(final_report)
-
-            st.divider()
-            st.subheader("Final Report")
-            st.markdown(final_report)
-
-            st.success("Report saved to output.txt")
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": response
+        }
+    )
